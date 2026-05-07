@@ -1,4 +1,3 @@
-"""Утилиты: энтропия, поиск, хеши, метаданные."""
 from __future__ import annotations
 import hashlib, json, logging, math, os, signal, sys, time
 from pathlib import Path
@@ -97,7 +96,6 @@ def restore_metadata(compressed: Path, restored: Path) -> None:
         with open(meta_path) as f: meta = json.load(f)
         os.chmod(restored, int(meta["mode"], 8))
         os.utime(restored, (meta["atime"], meta["mtime"]))
-        # ✅ Безопасно для Windows: chown вызывается только при наличии
         if hasattr(os, 'chown'):
             try: os.chown(restored, meta["uid"], meta["gid"])
             except Exception: pass

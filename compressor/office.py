@@ -1,9 +1,3 @@
-"""
-Advanced OOXML Document Optimizer (.docx, .xlsx, .pptx)
-Глубокая очистка структуры, медиа, XML и ультра-компрессия ZIP.
-Совместим с MS Office 2010+, LibreOffice, Google Docs.
-Цель: 50%+ сжатие без потерь информации.
-"""
 from __future__ import annotations
 import io, json, os, re, shutil, tempfile, zipfile, zlib
 from pathlib import Path
@@ -22,32 +16,24 @@ def _is_ooxml(filepath: Path) -> bool:
         return False
 
 def _optimize_image(img_data: bytes, ext: str, lossy: bool, aggressive: bool) -> bytes:
-    """Оптимизация изображений БЕЗ потерь (lossless только)."""
     try:
         img = Image.open(io.BytesIO(img_data))
         out = io.BytesIO()
         ext_lower = ext.lower()
 
-        # Конвертация в наиболее эффективный формат без потерь
         if aggressive:
-            # Уменьшение размера только если очень большое (но сохраняем пропорции)
             if img.size[0] > 3840 or img.size[1] > 3840:
                 img.thumbnail((3840, 3840), Image.Resampling.LANCZOS)
 
         if ext_lower in ('.jpg', '.jpeg'):
-            # JPEG: максимальное качество + оптимизация Huffman
             img.save(out, format='JPEG', quality=95, optimize=True, exif=None, progressive=True)
         elif ext_lower == '.png':
-            # PNG: конвертация в WebP lossless для лучшего сжатия
             img.save(out, format='WEBP', lossless=True, method=6, quality=100)
         elif ext_lower == '.webp':
-            # WebP lossless с максимальной компрессией
             img.save(out, format='WEBP', lossless=True, method=6, quality=100, exact=True)
         elif ext_lower == '.bmp':
-            # BMP -> PNG lossless
             img.save(out, format='PNG', optimize=True, compress_level=9)
         elif ext_lower == '.tiff':
-            # TIFF -> PNG lossless
             img.save(out, format='PNG', optimize=True, compress_level=9)
         else:
             img.save(out, format=img.format or 'PNG', optimize=True, compress_level=9)
@@ -59,29 +45,22 @@ def _optimize_image(img_data: bytes, ext: str, lossy: bool, aggressive: bool) ->
         return img_data
 
 def _clean_xml(xml_data: bytes) -> bytes:
-    """Глубокая очистка XML от метаданных, служебных атрибутов и избыточных данных."""
     try:
         text = xml_data.decode('utf-8', errors='ignore')
 
-        # Удаление идентификаторов ревизий и отслеживания изменений
         text = re.sub(r'\s*(?:w:rsid\w*|wp14:anchorId|wp14:editId|mc:Ignorable|w14:paraId|w14:textId)="[^"]*"', '', text)
 
-        # Удаление блоков метаданных
         text = re.sub(r'<[^>]+:metadata[^>]*>.*?</[^>]+:metadata>', '', text, flags=re.DOTALL)
         text = re.sub(r'<[^>]+:(?:core|extended|custom)Properties[^>]*>.*?</[^>]+:\1Properties>', '', text, flags=re.DOTALL)
 
-        # Удаление цифровых подписей (не влияет на макросы)
         text = re.sub(r'<[^>]+:Digitalsignatures?[^>]*>.*?</[^>]+:Digitalsignatures?>', '', text, flags=re.DOTALL | re.IGNORECASE)
         text = re.sub(r'<[^>]+:SignatureInfo[^>]*>.*?</[^>]+:SignatureInfo>', '', text, flags=re.DOTALL | re.IGNORECASE)
 
-        # Удаление кэша формул Excel (пересчитаются при открытии)
         text = re.sub(r'<[^>]+:cachedFormula[^>]*>.*?</[^>]+:cachedFormula>', '', text, flags=re.DOTALL | re.IGNORECASE)
-        text = re.sub(r'\s*sv:t="[^"]*"', '', text)  # Строковые значения кэша
+        text = re.sub(r'\s*sv:t="[^"]*"', '', text)
 
-        # Удаление пустых пространств имен
         text = re.sub(r'\s+xmlns:[a-z0-9]+="http://schemas\.openxmlformats\.org/(?:markupCompatibility|drawingml)/alternateContent"', '', text, flags=re.IGNORECASE)
 
-        # Минификация
         text = re.sub(r'>\s+<', '><', text)
         text = re.sub(r'\n\s*\n', '\n', text)
         text = re.sub(r'^\s+', '', text, flags=re.MULTILINE)
@@ -93,36 +72,21 @@ def _clean_xml(xml_data: bytes) -> bytes:
 
 
 def _deep_clean_structure(tmp_dir: Path) -> Tuple[int, List[str]]:
-    """Глубокая очистка структуры документа с возвратом списка удалённых элементов."""
     saved = 0
     removed = []
 
     remove_patterns = [
-        # Миниатюры и превью
         'docProps/thumbnail.jpeg', 'docProps/thumbnail.png', 'docProps/thumbnail.emf',
         'docProps/icon.png', 'docProps/icon.ico',
-        # Настройки принтера
         'word/printerSettings/', 'ppt/printerSettings/', 'xl/printerSettings/',
         'word/printSettings/', 'ppt/printSettings/', 'xl/printSettings/',
-        # Кэш и временные файлы
         '**/embeddings/tmp*', '**/media/tmp*', '**/*.tmp',
-        # Избыточные метаданные (не удаляем customXml полностью - может содержать данные)
-        # 'customXml/', 'word/customXml/', 'ppt/customXml/', 'xl/customXml/',  # ОПАСНО: может ломать документы
         'docProps/custom.xml', 'docProps/app2.xml',
-        # Резервные копии
         '**/_rels/*.bak', '**/*.bak', 'word/backup/', 'xl/backup/',
-        # Мастера слайдов и заметки (для презентаций - можно удалить если не нужны)
         'ppt/handoutMasters/', 'ppt/slideMasters/_rels/',
         'ppt/notesSlides/', 'ppt/notesMaster/',
-        # Внешние ссылки (кэш)
         'xl/externalLinks/', 'xl/externalLinkSources/',
-        # Аудит и рецензирование
         'word/revisionHeaders/', 'word/revisionLog/',
-        # Дубли стилей - НЕ УДАЛЯЕМ! Требуется для совместимости с MS Office
-        # 'word/stylesWithEffects.xml',  # ОПАСНО: ломает открытие в Word
-        # 'ppt/tableStyles.xml',  # ОПАСНО: ломает таблицы в PowerPoint
-        # webSettings.xml - НЕ УДАЛЯЕМ! Требуется для корректного открытия
-        # 'word/webSettings.xml', 'xl/webSettings.xml', 'ppt/webSettings.xml',  # ОПАСНО
     ]
 
     for pattern in remove_patterns:
@@ -152,22 +116,19 @@ def optimize_office(
     aggressive: bool = False,
     verify: bool = True,
     delete_source: bool = False,
-    ultra_compress: bool = True  # Новый параметр для Zstd-компрессии поверх ZIP
+    ultra_compress: bool = True
 ) -> Dict[str, object]:
-    """
-    Продвинутая оптимизация Office документов с целью 50%+ сжатия без потерь.
-
-    Этапы:
-    1. Глубокая очистка структуры (удаление метаданных, кэша, превью)
-    2. Оптимизация изображений (конвертация в WebP lossless, уменьшение больших изображений)
-    3. Очистка XML (удаление служебных атрибутов, кэша формул)
-    4. Ультра-компрессия ZIP + Zstandard (опционально для максимального сжатия)
-    """
     src = Path(src).resolve()
     if not src.exists(): raise FileNotFoundError(f"Файл не найден: {src}")
     if not _is_ooxml(src): raise ValueError(f"{src.name} не является валидным OOXML документом.")
+        
+    archive_dir = src.parent / "archived"
+    archive_dir.mkdir(parents=True, exist_ok=True)
 
     dst = Path(dst).resolve() if dst else src.with_suffix(f".opt{src.suffix}")
+
+    dst = archive_dir / dst.name
+    
     dst.parent.mkdir(parents=True, exist_ok=True)
 
     result = {
@@ -189,13 +150,11 @@ def optimize_office(
         with zipfile.ZipFile(src, 'r') as z:
             z.extractall(tmp_dir)
 
-        # 1. Глубокая очистка структуры
         struct_saved, removed_items = _deep_clean_structure(tmp_dir)
         result["breakdown"]["structure"] = struct_saved
         result["breakdown"]["removed_items"] = removed_items[:20]
         logger.info(f"  🗑️ Удалено элементов: {len(removed_items)}")
 
-        # 2. Оптимизация изображений (lossless только)
         media_dirs = [d for d in tmp_dir.rglob('*') if d.is_dir() and d.name == 'media']
         for media_dir in media_dirs:
             for img_path in media_dir.iterdir():
@@ -207,7 +166,6 @@ def optimize_office(
                         result["breakdown"]["media"] += len(orig_data) - len(opt_data)
         logger.info(f"  🖼️ Оптимизация медиа: -{result['breakdown']['media']/1024:.1f}KB")
 
-        # 3. Глубокая очистка XML
         xml_files = list(tmp_dir.rglob('*.xml'))
         for xml_path in xml_files:
             try:
@@ -219,7 +177,6 @@ def optimize_office(
             except Exception: continue
         logger.info(f"  📝 Очистка XML: -{result['breakdown']['xml']/1024:.1f}KB")
 
-        # 4. Создание ZIP с оптимизированным порядком файлов
         zip_tmp = tmp_dir / "optimized.zip"
         with zipfile.ZipFile(zip_tmp, 'w', zipfile.ZIP_DEFLATED, compresslevel=9) as z_out:
             text_files = []
@@ -241,12 +198,11 @@ def optimize_office(
             for fpath, rel, ctype in sorted(binary_files, key=lambda x: str(x[1])):
                 z_out.write(fpath, rel, compress_type=ctype)
 
-        # 5. Ультра-компрессия: Zstandard поверх ZIP для максимального сжатия
         if ultra_compress:
             logger.info("  🚀 Применяем Zstandard компрессию поверх ZIP...")
             final_dst = dst.with_suffix(dst.suffix + ".zst")
             with open(zip_tmp, 'rb') as fin, open(final_dst, 'wb') as fout:
-                cctx = zstd.ZstdCompressor(level=19, threads=-1)  # Максимальный уровень, многопоточность
+                cctx = zstd.ZstdCompressor(level=19, threads=-1) 
                 cctx.copy_stream(fin, fout)
             result["breakdown"]["zstd_extra"] = zip_tmp.stat().st_size - final_dst.stat().st_size
             result["output_path"] = str(final_dst)
@@ -266,7 +222,6 @@ def optimize_office(
         if verify:
             logger.info("✅ Проверка целостности...")
             result["checksum"] = stream_sha256(final_dst, "Optimized")
-            # Для Zstd проверяем распаковку
             if ultra_compress:
                 with open(final_dst, 'rb') as fin:
                     decompressed = io.BytesIO()
@@ -275,12 +230,10 @@ def optimize_office(
                     decompressed.seek(0)
                     with zipfile.ZipFile(decompressed, 'r') as z_check:
                         namelist = z_check.namelist()
-                        # Проверяем наличие обязательных элементов OOXML
                         required_files = ['[Content_Types].xml', '_rels/.rels']
                         for req_file in required_files:
                             if req_file not in namelist:
                                 logger.warning(f"⚠️ Отсутствует элемент: {req_file}")
-                        # Проверяем наличие основных файлов документа
                         has_content = any('document.xml' in f or 'workbook.xml' in f or 'presentation.xml' in f for f in namelist)
                         if not has_content:
                             raise ValueError("Архив повреждён после оптимизации! Отсутствует основной контент.")

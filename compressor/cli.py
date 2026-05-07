@@ -1,4 +1,3 @@
-"""CLI-интерфейс: сжатие и распаковка."""
 from __future__ import annotations
 import argparse, sys, os
 from pathlib import Path

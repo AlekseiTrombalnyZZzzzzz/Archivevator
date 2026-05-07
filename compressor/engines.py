@@ -1,4 +1,3 @@
-"""Движки сжатия и распаковки."""
 from __future__ import annotations
 import io
 from pathlib import Path
@@ -28,7 +27,6 @@ def compress_lzma(inp: IO[bytes], out: IO[bytes], level: int, threads: int = 0) 
     out.write(comp.flush())
 
 def compress_image(inp: IO[bytes], out: IO[bytes], level: int, threads: int = 0) -> None:
-    """Автоматическое уменьшение изображения в 2 раза + оптимизация формата."""
     data = inp.read()
     size = len(data)
     if size > config.IMAGE_MAX_RAM_MB * 1024 * 1024:
@@ -38,7 +36,6 @@ def compress_image(inp: IO[bytes], out: IO[bytes], level: int, threads: int = 0)
         img = Image.open(io.BytesIO(data))
         fmt = img.format or "PNG"
 
-        # 🔑 Уменьшаем ширину и высоту ровно в 2 раза
         new_w = max(1, img.width // 2)
         new_h = max(1, img.height // 2)
         img = img.resize((new_w, new_h), Image.Resampling.LANCZOS)
